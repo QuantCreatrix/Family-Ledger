@@ -1,0 +1,1231 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Family Expenses</title>
+
+<!--
+  ═══════════════════════════════════════════════════════════════════
+   SETUP (5 minutes)
+  ═══════════════════════════════════════════════════════════════════
+  1. console.firebase.google.com → create project
+  2. Authentication → Sign-in method → enable "Email/Password"
+  3. Firestore Database → Create database (production mode)
+  4. Project settings → Your apps → Web app → copy config
+     → paste it into `firebaseConfig` below
+  5. Paste these SECURITY RULES in Firestore → Rules → Publish:
+
+  rules_version = '2';
+  service cloud.firestore {
+    match /databases/{database}/documents {
+
+      function myDoc() {
+        return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+      }
+      function hasProfile() {
+        return request.auth != null
+          && exists(/databases/$(database)/documents/users/$(request.auth.uid));
+      }
+      function inFamily(fid) {
+        return hasProfile() && myDoc().familyId == fid;
+      }
+      function isOwner(fid) {
+        return hasProfile() && myDoc().familyId == fid && myDoc().role == 'owner';
+      }
+
+      match /users/{uid} {
+        allow read: if request.auth != null && (
+          request.auth.uid == uid ||
+          (hasProfile() && myDoc().familyId == resource.data.familyId)
+        );
+        allow create: if request.auth != null && (
+          (request.auth.uid == uid && request.resource.data.role == 'owner') ||
+          isOwner(request.resource.data.familyId)
+        );
+        allow update, delete: if false;
+      }
+
+      match /families/{familyId} {
+        allow read: if inFamily(familyId);
+        allow create: if request.auth != null
+                      && request.resource.data.ownerUid == request.auth.uid;
+        allow update: if isOwner(familyId);
+
+        match /expenses/{expenseId} {
+          allow read:   if inFamily(familyId);
+          allow create: if inFamily(familyId)
+                        && request.resource.data.addedBy == request.auth.uid;
+          allow delete: if inFamily(familyId)
+                        && (isOwner(familyId)
+                            || resource.data.addedBy == request.auth.uid);
+          allow update: if false;
+        }
+
+        match /settings/{docId} {
+          allow read:  if inFamily(familyId);
+          allow write: if isOwner(familyId);
+        }
+      }
+    }
+  }
+  ═══════════════════════════════════════════════════════════════════
+-->
+
+<style>
+  :root{
+    --bg:#f4f6fb;
+    --card:#ffffff;
+    --text:#161a25;
+    --muted:#6b7280;
+    --line:#e9ecf3;
+    --accent:#4f46e5;
+    --accent-soft:#eef0ff;
+    --green:#0f9d76;
+    --amber:#f59e0b;
+    --red:#e5484d;
+    --radius:16px;
+  }
+  *{box-sizing:border-box; -webkit-tap-highlight-color: transparent}
+  html,body{height:100%}
+  body{
+    margin:0;
+    font-family:"Inter",system-ui,-apple-system,"Segoe UI",Roboto,Arial,sans-serif;
+    background:var(--bg); color:var(--text);
+    -webkit-font-smoothing:antialiased;
+    overflow-x:hidden;
+  }
+  .hidden{display:none !important}
+  .muted{color:var(--muted)}
+
+  /* ───────── AUTH ───────── */
+  .auth-wrap{
+    min-height:100vh; display:grid; place-items:center; padding:16px;
+    background:
+      radial-gradient(900px 520px at 0% 0%, #dfe5ff 0%, transparent 62%),
+      radial-gradient(800px 520px at 100% 100%, #d7f5ea 0%, transparent 62%),
+      var(--bg);
+  }
+  .auth-card{
+    width:min(420px,100%); background:#fff; border:1px solid var(--line);
+    border-radius:22px; padding:22px;
+    box-shadow:0 24px 60px -28px rgba(20,30,60,.35);
+  }
+  @media(max-width:480px){
+    .auth-card{padding:18px; border-radius:18px}
+  }
+  .brand-lg{display:flex; gap:12px; align-items:center; margin-bottom:20px}
+  .brand-lg h1{font-size:18px; margin:0; letter-spacing:-.02em}
+  .brand-lg p{margin:3px 0 0; color:var(--muted); font-size:12.5px}
+  .logo{
+    width:44px;height:44px;border-radius:13px;display:grid;place-items:center;
+    background:linear-gradient(135deg,#6366f1,#22c55e); font-size:21px;
+    box-shadow:0 10px 22px -10px rgba(79,70,229,.85); flex:none;
+  }
+  .logo.sm{width:36px;height:36px;border-radius:11px;font-size:17px}
+
+  .tabs{display:flex;background:#f2f4f9;padding:4px;border-radius:12px;margin-bottom:16px}
+  .tab{
+    flex:1;border:0;background:transparent;padding:10px;border-radius:9px;
+    font:inherit;font-weight:600;font-size:13.5px;color:var(--muted);cursor:pointer;
+    transition:.15s;
+  }
+  .tab.active{background:#fff;color:var(--text);box-shadow:0 2px 8px rgba(20,30,60,.09)}
+
+  /* ───────── FORMS ───────── */
+  label{display:block;font-size:12.5px;font-weight:600;color:#3a4152;margin-bottom:12px}
+  .opt{font-weight:500;color:#9aa1b2}
+  input,select{
+    width:100%;margin-top:6px;padding:12px;border-radius:11px;
+    border:1px solid var(--line);background:#fbfcfe;font:inherit;font-size:16px;
+    color:var(--text);outline:none;transition:border .15s, box-shadow .15s, background .15s;
+    -webkit-appearance:none; appearance:none;
+  }
+  @media(min-width:481px){
+    input,select{font-size:14px;padding:11px 12px}
+  }
+  input:focus,select:focus{
+    border-color:#b9bdf7;box-shadow:0 0 0 4px rgba(79,70,229,.12);background:#fff;
+  }
+  .row{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+  @media(max-width:420px){.row{grid-template-columns:1fr}}
+
+  button{font:inherit;cursor:pointer}
+  .primary{
+    width:100%;border:0;border-radius:12px;padding:13px;font-weight:700;font-size:14px;
+    color:#fff;background:linear-gradient(135deg,#5b54f0,#4338ca);
+    box-shadow:0 12px 24px -14px rgba(67,56,202,.95);margin-top:4px;
+    transition:filter .15s, transform .06s;
+  }
+  .primary:hover{filter:brightness(1.07)}
+  .primary:active{transform:translateY(1px)}
+  .primary:disabled{opacity:.6;cursor:not-allowed}
+  .primary.small{width:auto;padding:10px 18px;font-size:13px;margin-top:12px}
+  @media(max-width:480px){.primary.small{width:100%}}
+  .ghost{
+    background:#fff;border:1px solid var(--line);border-radius:10px;
+    padding:9px 12px;font-size:13px;font-weight:600;color:#444;transition:.15s;
+  }
+  .ghost:hover{background:#f7f8fc;border-color:#d9dded}
+  .ghost.wide{width:100%;margin-top:12px}
+  .chip{
+    border:1px solid var(--line);background:#fff;border-radius:999px;
+    padding:7px 12px;font-size:12px;font-weight:600;color:var(--muted);transition:.15s;
+    white-space:nowrap;
+  }
+  .chip:hover{border-color:#c9cdf5;color:var(--accent);background:var(--accent-soft)}
+  .quick-row{display:flex;gap:8px;margin:-4px 0 14px;flex-wrap:wrap}
+  .hint{font-size:11.5px;color:var(--muted);margin:12px 0 0;line-height:1.5}
+
+  /* ───────── APP LAYOUT ───────── */
+  .app{max-width:1080px;margin:0 auto;padding:16px 14px 60px}
+  @media(min-width:641px){.app{padding:22px 20px 70px}}
+
+  .topbar{
+    display:flex;justify-content:space-between;align-items:center;gap:12px;
+    flex-wrap:wrap;margin-bottom:16px;
+  }
+  .brand{display:flex;gap:10px;align-items:center;min-width:0}
+  .family-name{font-weight:800;font-size:16px;letter-spacing:-.01em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:190px}
+  .family-sub{font-size:11.5px;color:var(--muted)}
+  .user-chip{display:flex;align-items:center;gap:8px;font-size:13px;font-weight:600;flex-wrap:wrap}
+  .user-chip > span:first-child{max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  @media(max-width:480px){
+    .user-chip{gap:6px}
+    .user-chip > span:first-child{display:none}
+    .family-name{max-width:150px}
+  }
+  .icon-btn{
+    width:38px;height:38px;border-radius:11px;border:1px solid var(--line);
+    background:#fff;display:grid;place-items:center;font-size:16px;
+    transition:.15s;flex:none;
+  }
+  .icon-btn:hover{background:#f7f8fc;border-color:#d9dded}
+
+  .grid{display:grid;grid-template-columns:1.1fr .9fr;gap:16px;align-items:start;margin-bottom:16px}
+  @media(max-width:880px){.grid{grid-template-columns:1fr;gap:14px}}
+  .col > .card + .card{margin-top:14px}
+
+  .card{
+    background:var(--card);border:1px solid var(--line);border-radius:var(--radius);
+    padding:16px;box-shadow:0 14px 34px -28px rgba(20,30,60,.55);
+  }
+  @media(min-width:641px){.card{padding:18px}}
+  .card-head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:14px}
+  .card-head h2{font-size:15px;margin:0;font-weight:700;letter-spacing:-.01em}
+
+  .badge{
+    font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;
+    padding:4px 8px;border-radius:999px;white-space:nowrap;
+  }
+  .badge-owner{background:var(--accent-soft);color:#4338ca}
+  .badge-member{background:#e9f8f2;color:var(--green)}
+  .pill{font-size:11px;color:var(--muted);background:#f3f5fa;padding:4px 9px;border-radius:999px;font-weight:600;white-space:nowrap}
+
+  /* ───────── BUDGET BAR (in add-expense card) ───────── */
+  .budget-strip{
+    margin:0 0 16px;padding:13px 14px;border-radius:13px;
+    background:linear-gradient(135deg,#f7f8ff,#f2f5ff);
+    border:1px solid #e7e9fb;
+  }
+  .budget-top{display:flex;justify-content:space-between;align-items:baseline;gap:8px;margin-bottom:8px;flex-wrap:wrap}
+  .budget-left{font-size:12px;font-weight:700;color:#3a4152;letter-spacing:-.01em}
+  .budget-left strong{font-size:17px;font-weight:800;letter-spacing:-.02em;color:var(--text)}
+  .budget-right{font-size:11.5px;color:var(--muted);font-weight:600}
+  .budget-bar{height:9px;border-radius:99px;background:#e3e6f5;overflow:hidden;position:relative}
+  .budget-bar i{
+    display:block;height:100%;border-radius:99px;
+    background:linear-gradient(90deg,#5b54f0,#818cf8);
+    transition:width .4s ease, background .3s;
+  }
+  .budget-bar i.warn{background:linear-gradient(90deg,#f59e0b,#fbbf24)}
+  .budget-bar i.over{background:linear-gradient(90deg,#f97316,#e5484d)}
+  .budget-foot{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-top:8px;font-size:11.5px;flex-wrap:wrap}
+  .budget-foot .spent{color:var(--muted);font-weight:600}
+  .budget-foot .left{font-weight:700;color:var(--green)}
+  .budget-foot .left.warn{color:var(--amber)}
+  .budget-foot .left.over{color:var(--red)}
+  .budget-empty{
+    display:flex;align-items:center;justify-content:space-between;gap:8px;
+    font-size:12px;color:var(--muted);flex-wrap:wrap;
+  }
+  .budget-empty strong{color:var(--text)}
+  .link-btn{
+    border:0;background:transparent;color:var(--accent);font-size:11.5px;
+    font-weight:700;padding:0;text-decoration:underline;text-underline-offset:2px;
+  }
+
+  /* ───────── SETTINGS MODAL ───────── */
+  .modal{
+    position:fixed;inset:0;background:rgba(18,22,34,.5);backdrop-filter:blur(3px);
+    display:flex;align-items:flex-end;justify-content:center;z-index:80;
+    padding:0;
+    animation:fadeIn .18s ease;
+  }
+  @media(min-width:641px){
+    .modal{align-items:center;padding:24px}
+  }
+  @keyframes fadeIn{from{opacity:0}to{opacity:1}}
+  @keyframes slideUp{from{transform:translateY(24px);opacity:.6}to{transform:translateY(0);opacity:1}}
+  .modal-card{
+    background:#fff;width:min(460px,100%);border-radius:22px 22px 0 0;
+    padding:20px;max-height:92vh;overflow-y:auto;
+    box-shadow:0 -20px 60px -20px rgba(20,30,60,.35);
+    animation:slideUp .22s ease;
+  }
+  @media(min-width:641px){
+    .modal-card{border-radius:20px;padding:22px}
+  }
+  .modal-head{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:16px}
+  .modal-head h2{margin:0;font-size:16px;font-weight:800;letter-spacing:-.02em}
+  .modal-close{
+    width:32px;height:32px;border-radius:9px;border:1px solid var(--line);
+    background:#fff;font-size:15px;color:var(--muted);
+  }
+  .modal-close:hover{background:#f7f8fc}
+  .modal-section{margin-bottom:18px}
+  .modal-section:last-child{margin-bottom:0}
+  .modal-section h3{
+    font-size:11px;text-transform:uppercase;letter-spacing:.06em;
+    color:#8b93a7;font-weight:700;margin:0 0 10px;
+  }
+  .settings-summary{
+    padding:12px 14px;border-radius:12px;background:#f7f8ff;border:1px solid #e7e9fb;
+    font-size:13px;font-weight:600;margin-bottom:12px;
+  }
+  .settings-summary span{color:var(--muted);font-weight:500}
+  .member-list{display:flex;flex-direction:column;gap:9px;margin-bottom:12px}
+  .member{display:flex;align-items:center;gap:10px;font-size:13.5px;font-weight:600}
+  .avatar{
+    width:30px;height:30px;border-radius:50%;background:var(--accent-soft);
+    color:#4338ca;display:grid;place-items:center;font-size:11.5px;font-weight:800;flex:none;
+  }
+  .member-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .member-name em{color:var(--muted);font-style:normal;font-weight:500;font-size:12px}
+  .member-form{margin-top:4px;padding-top:14px;border-top:1px dashed #eef0f6}
+
+  /* ───────── ENTRIES ───────── */
+  .day-group{margin-bottom:14px}
+  .day-group:last-child{margin-bottom:0}
+  .day-head{
+    display:flex;justify-content:space-between;align-items:center;
+    padding:8px 2px;font-size:11px;font-weight:700;text-transform:uppercase;
+    letter-spacing:.05em;color:#8b93a7;border-bottom:1px solid var(--line);margin-bottom:4px;
+  }
+  .day-total{color:#3a4152;letter-spacing:0;font-size:12px}
+  .entry{display:flex;align-items:center;gap:10px;padding:9px 4px;border-radius:12px;transition:background .12s}
+  .entry:hover{background:#fafbff}
+  .entry-icon{
+    width:34px;height:34px;border-radius:11px;background:#f3f5fa;
+    display:grid;place-items:center;font-size:16px;flex:none;
+  }
+  .entry-main{flex:1;min-width:0}
+  .entry-cat{font-weight:700;font-size:13.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .entry-note{font-size:12px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .entry-meta{text-align:right;flex:none}
+  .entry-amt{font-weight:800;font-size:14px;white-space:nowrap}
+  .entry-by{font-size:11px;color:var(--muted);white-space:nowrap}
+  @media(max-width:420px){
+    .entry-by{font-size:10.5px}
+    .entry-amt{font-size:13.5px}
+  }
+  .del{
+    width:28px;height:28px;border-radius:8px;border:0;background:transparent;
+    color:#c9cdd8;font-size:13px;line-height:1;flex:none;transition:.15s;
+  }
+  .del:hover{background:#feeced;color:var(--red)}
+  .empty{text-align:center;color:var(--muted);font-size:13px;padding:28px 0}
+
+  /* ───────── TOAST ───────── */
+  #toast{
+    position:fixed;left:50%;bottom:20px;transform:translate(-50%,22px);
+    background:#161a25;color:#fff;padding:12px 16px;border-radius:12px;
+    font-size:13px;font-weight:600;opacity:0;pointer-events:none;
+    transition:opacity .25s, transform .25s;z-index:99;
+    max-width:calc(100vw - 32px);width:max-content;
+    box-shadow:0 18px 40px -18px rgba(0,0,0,.6);text-align:center;
+  }
+  #toast.show{opacity:1;transform:translate(-50%,0)}
+  #toast.error{background:var(--red)}
+  #toast.success{background:var(--green)}
+</style>
+</head>
+<body>
+
+<!-- ══════════════ AUTH SCREEN ══════════════ -->
+<div id="authScreen" class="auth-wrap">
+  <div class="auth-card">
+    <div class="brand-lg">
+      <div class="logo">💰</div>
+      <div>
+        <h1>Family Expenses</h1>
+        <p>Track every rupee — together.</p>
+      </div>
+    </div>
+
+    <div class="tabs">
+      <button class="tab active" data-tab="signin" type="button">Sign in</button>
+      <button class="tab" data-tab="create" type="button">Create family</button>
+    </div>
+
+    <form id="signinForm" class="pane">
+      <label>Username
+        <input id="siUsername" autocomplete="username" placeholder="e.g. ravi" required>
+      </label>
+      <label>Password
+        <input id="siPassword" type="password" autocomplete="current-password" placeholder="••••••••" required>
+      </label>
+      <button id="siBtn" class="primary" type="submit">Sign in</button>
+      <p class="hint">Don't have an account? Ask the family owner to add you.</p>
+    </form>
+
+    <form id="createForm" class="pane hidden">
+      <label>Family name
+        <input id="cfFamily" placeholder="e.g. The Sharmas" required>
+      </label>
+      <label>Your name
+        <input id="cfName" placeholder="e.g. Ravi" required>
+      </label>
+      <div class="row">
+        <label>Username
+          <input id="cfUsername" placeholder="e.g. ravi" autocomplete="username" required>
+        </label>
+        <label>Currency
+          <input id="cfCurrency" value="₹" maxlength="3" required>
+        </label>
+      </div>
+      <label>Password
+        <input id="cfPassword" type="password" minlength="6" autocomplete="new-password" placeholder="at least 6 characters" required>
+      </label>
+      <label>Start date
+        <input id="cfStartDate" type="date" required>
+      </label>
+      <button id="cfBtn" class="primary" type="submit">Create family</button>
+      <p class="hint">You become the owner. You can add members and set a monthly budget from Settings.</p>
+    </form>
+  </div>
+</div>
+
+<!-- ══════════════ APP SCREEN ══════════════ -->
+<div id="appScreen" class="hidden">
+  <div class="app">
+
+    <header class="topbar">
+      <div class="brand">
+        <div class="logo sm">💰</div>
+        <div>
+          <div class="family-name" id="familyName">Family</div>
+          <div class="family-sub" id="familySub">Family expense tracker</div>
+        </div>
+      </div>
+      <div class="user-chip">
+        <span id="userName">User</span>
+        <span id="roleBadge" class="badge badge-member">Member</span>
+        <button id="settingsBtn" class="icon-btn" type="button" title="Settings" aria-label="Settings">⚙️</button>
+        <button id="logoutBtn" class="ghost" type="button">Log out</button>
+      </div>
+    </header>
+
+    <div class="grid">
+
+      <!-- ── ADD EXPENSE ── -->
+      <section class="card">
+        <div class="card-head">
+          <h2>Add expense</h2>
+          <span class="pill" id="addedByPill">by you</span>
+        </div>
+
+        <!-- Budget strip -->
+        <div id="budgetStrip" class="budget-strip"></div>
+
+        <form id="expenseForm">
+          <div class="row">
+            <label>Date
+              <input type="date" id="expDate" required>
+            </label>
+            <label>Amount
+              <input type="number" id="expAmount" min="0.01" step="0.01" inputmode="decimal" placeholder="0.00" required>
+            </label>
+          </div>
+
+          <div class="quick-row">
+            <button type="button" class="chip" data-days="0">Today</button>
+            <button type="button" class="chip" data-days="-1">Yesterday</button>
+            <button type="button" class="chip" data-days="-2">2 days ago</button>
+            <button type="button" class="chip" data-days="-7">Last week</button>
+          </div>
+
+          <label>Category
+            <select id="expCategory"></select>
+          </label>
+
+          <label>Note <span class="opt">(optional)</span>
+            <input type="text" id="expNote" maxlength="120" placeholder="e.g. Electricity bill">
+          </label>
+
+          <button id="addBtn" class="primary" type="submit">Add expense</button>
+        </form>
+      </section>
+
+      <!-- ── RECENT ENTRIES ── -->
+      <div class="col">
+        <section class="card">
+          <div class="card-head">
+            <h2>Recent entries</h2>
+            <span class="muted" id="entryCount" style="font-size:12px"></span>
+          </div>
+          <div id="entries"></div>
+          <button id="loadMoreBtn" class="ghost wide hidden" type="button">Load more</button>
+        </section>
+      </div>
+
+    </div>
+
+  </div>
+</div>
+
+<!-- ══════════════ SETTINGS MODAL ══════════════ -->
+<div id="settingsModal" class="modal hidden" role="dialog" aria-modal="true" aria-label="Settings">
+  <div class="modal-card">
+    <div class="modal-head">
+      <h2>Settings</h2>
+      <button id="settingsClose" class="modal-close" type="button" aria-label="Close">✕</button>
+    </div>
+
+    <!-- Budget -->
+    <div class="modal-section">
+      <h3>Monthly budget</h3>
+      <div class="settings-summary" id="settingsSummary">—</div>
+
+      <div class="limit-edit" id="limitEdit">
+        <div class="limit-inputs row">
+          <label>Monthly limit
+            <input type="number" id="limitInput" min="0" step="1" inputmode="decimal" placeholder="e.g. 25000">
+          </label>
+          <label>Start date
+            <input type="date" id="startDateInput">
+          </label>
+        </div>
+        <button id="saveLimitBtn" class="primary small" type="button">Save budget</button>
+        <p class="hint" id="limitEditHint">One limit for the whole family. Leave blank for no limit.</p>
+      </div>
+      <p class="hint hidden" id="limitReadHint">Only the family owner can change the budget.</p>
+    </div>
+
+    <!-- Members -->
+    <div class="modal-section">
+      <h3>Family members</h3>
+      <div id="memberList" class="member-list"></div>
+
+      <form id="memberForm" class="member-form hidden">
+        <div class="row">
+          <label>Name
+            <input id="mName" placeholder="e.g. Priya" required>
+          </label>
+          <label>Username
+            <input id="mUsername" placeholder="e.g. priya" autocomplete="off" required>
+          </label>
+        </div>
+        <label>Temporary password
+          <input id="mPassword" type="password" minlength="6" autocomplete="new-password" placeholder="at least 6 characters" required>
+        </label>
+        <button id="mBtn" class="primary small" type="submit">Add member</button>
+        <p class="hint">Share the username + password with them. They can log in immediately.</p>
+      </form>
+    </div>
+  </div>
+</div>
+
+<div id="toast"></div>
+
+<script type="module">
+/* ═══════════════════════════════════════════════════════════════
+   1. FIREBASE CONFIG  ← paste yours here
+   ═══════════════════════════════════════════════════════════════ */
+const firebaseConfig = {
+  apiKey: "AIzaSyDKzv-iAT0VraS9BhWNZoD7fdt0K6BGEn8",
+  authDomain: "family-ledger-e49c9.firebaseapp.com",
+  projectId: "family-ledger-e49c9",
+  storageBucket: "family-ledger-e49c9.firebasestorage.app",
+  messagingSenderId: "934201376486",
+  appId: "1:934201376486:web:c8d2aca16dc13de8568527"
+};
+
+import { initializeApp, deleteApp } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-app.js";
+import {
+  getAuth, onAuthStateChanged, signInWithEmailAndPassword,
+  createUserWithEmailAndPassword, signOut
+} from "https://www.gstatic.com/firebasejs/10.12.5/firebase-auth.js";
+import {
+  getFirestore, doc, getDoc, setDoc, addDoc, deleteDoc,
+  collection, query, orderBy, limit, onSnapshot, where,
+  serverTimestamp, getDocs
+} from "https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore.js";
+
+const app  = initializeApp(firebaseConfig);
+const auth = getAuth(app);
+const db   = getFirestore(app);
+
+/* ═══════════════════════════════════════════════════════════════
+   2. CONSTANTS & HELPERS
+   ═══════════════════════════════════════════════════════════════ */
+const EMAIL_DOMAIN = 'family-expenses.local';
+const emailFor = u => `${u}@${EMAIL_DOMAIN}`;
+
+const CATEGORIES = [
+  { id: 'bills',     label: 'Bills & Utilities', emoji: '🧾' },
+  { id: 'groceries', label: 'Groceries',         emoji: '🛒' },
+  { id: 'food',      label: 'Food & Outing',     emoji: '🍽️' },
+  { id: 'clothes',   label: 'Clothes',           emoji: '👕' },
+  { id: 'transport', label: 'Transport & Fuel',  emoji: '⛽' },
+  { id: 'health',    label: 'Health & Medical',  emoji: '💊' },
+  { id: 'education', label: 'Education',         emoji: '🎓' },
+  { id: 'home',      label: 'Home & Repairs',    emoji: '🏠' },
+  { id: 'gifts',     label: 'Gifts & Festivals', emoji: '🎁' },
+  { id: 'misc',      label: 'Miscellaneous',     emoji: '📦' }
+];
+
+const $ = id => document.getElementById(id);
+const pad = n => String(n).padStart(2, '0');
+const esc = s => String(s ?? '').replace(/[&<>"']/g,
+  c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
+
+const todayISO   = () => { const d = new Date(); return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`; };
+const isoAddDays = n => { const d = new Date(); d.setDate(d.getDate()+n); return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`; };
+
+const DOW = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+const MON = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+
+function fmtDate(iso) {
+  if (iso === todayISO())     return 'Today';
+  if (iso === isoAddDays(-1)) return 'Yesterday';
+  const [y, m, d] = iso.split('-').map(Number);
+  const dt = new Date(y, m - 1, d);
+  return `${DOW[dt.getDay()]}, ${d} ${MON[m-1]} ${y}`;
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   3. STATE
+   ═══════════════════════════════════════════════════════════════ */
+let me      = null;
+let family  = null;
+let settings = { monthlyLimit: 0, startDate: null };
+let monthSpend = 0;
+let expenses   = [];
+let pageSize   = 30;
+
+let unsubExpenses = null, unsubSettings = null, unsubMonth = null;
+let signupGate = null;
+
+const money = n => {
+  const v = Number(n) || 0;
+  const cur = (family && family.currency) || '₹';
+  return cur + v.toLocaleString(undefined, { maximumFractionDigits: 2 });
+};
+
+let toastTimer = null;
+function toast(msg, type = '') {
+  const t = $('toast');
+  t.textContent = msg;
+  t.className = 'show ' + type;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { t.className = ''; }, 3200);
+}
+
+function setBusy(btn, busy, label) {
+  if (!btn) return;
+  btn.disabled = busy;
+  btn.textContent = label;
+}
+
+function friendly(err) {
+  const code = (err && err.code) || '';
+  if (code.includes('email-already-in-use')) return 'That username is already taken.';
+  if (code.includes('invalid-credential') || code.includes('wrong-password') ||
+      code.includes('user-not-found') || code.includes('invalid-email')) return 'Invalid username or password.';
+  if (code.includes('weak-password')) return 'Password must be at least 6 characters.';
+  if (code.includes('too-many-requests')) return 'Too many attempts — try again in a bit.';
+  if (code.includes('network')) return 'Network error. Check your connection.';
+  if (code.includes('permission-denied')) return 'Permission denied — check your Firestore rules.';
+  return (err && err.message) || 'Something went wrong.';
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   4. AUTH FLOW
+   ═══════════════════════════════════════════════════════════════ */
+onAuthStateChanged(auth, async user => {
+  if (signupGate) { try { await signupGate; } catch (e) { /* handled below */ } }
+
+  if (!user) { showAuthScreen(); return; }
+
+  try {
+    const snap = await getDoc(doc(db, 'users', user.uid));
+    if (!snap.exists()) { await signOut(auth); showAuthScreen(); return; }
+    me = { uid: user.uid, ...snap.data() };
+    await bootApp();
+  } catch (err) {
+    console.error(err);
+    toast(friendly(err), 'error');
+    showAuthScreen();
+  }
+});
+
+function showAuthScreen() {
+  [unsubExpenses, unsubSettings, unsubMonth].forEach(fn => { try { fn && fn(); } catch (e) {} });
+  unsubExpenses = unsubSettings = unsubMonth = null;
+  me = null; family = null; expenses = []; settings = { monthlyLimit: 0, startDate: null }; monthSpend = 0;
+  $('appScreen').classList.add('hidden');
+  $('settingsModal').classList.add('hidden');
+  $('authScreen').classList.remove('hidden');
+}
+
+/* ── Sign in ── */
+$('signinForm').addEventListener('submit', async e => {
+  e.preventDefault();
+  const username = $('siUsername').value.trim().toLowerCase();
+  const password = $('siPassword').value;
+  if (!username || !password) return;
+
+  setBusy($('siBtn'), true, 'Signing in…');
+  try {
+    await signInWithEmailAndPassword(auth, emailFor(username), password);
+    $('siPassword').value = '';
+  } catch (err) {
+    toast(friendly(err), 'error');
+  } finally {
+    setBusy($('siBtn'), false, 'Sign in');
+  }
+});
+
+/* ── Create family (owner) ── */
+$('createForm').addEventListener('submit', async e => {
+  e.preventDefault();
+  const familyName  = $('cfFamily').value.trim();
+  const displayName = $('cfName').value.trim();
+  const username    = $('cfUsername').value.trim().toLowerCase();
+  const password    = $('cfPassword').value;
+  const currency    = $('cfCurrency').value.trim() || '₹';
+  const startDate   = $('cfStartDate').value || todayISO();
+
+  if (!/^[a-z0-9._]{3,20}$/.test(username))
+    return toast('Username: 3–20 chars — letters, numbers, dot or underscore only.', 'error');
+  if (password.length < 6)
+    return toast('Password must be at least 6 characters.', 'error');
+
+  setBusy($('cfBtn'), true, 'Creating…');
+
+  signupGate = (async () => {
+    const cred = await createUserWithEmailAndPassword(auth, emailFor(username), password);
+    const uid  = cred.user.uid;
+    const familyId = doc(collection(db, 'families')).id;
+
+    await setDoc(doc(db, 'families', familyId), {
+      name: familyName,
+      currency,
+      ownerUid: uid,
+      startDate,
+      createdAt: serverTimestamp()
+    });
+
+    await setDoc(doc(db, 'users', uid), {
+      familyId,
+      username,
+      displayName,
+      role: 'owner',
+      createdAt: serverTimestamp()
+    });
+
+    await setDoc(doc(db, 'families', familyId, 'settings', 'config'), {
+      monthlyLimit: 0,
+      startDate
+    });
+  })();
+
+  try {
+    await signupGate;
+    $('cfPassword').value = '';
+    toast('Family created — welcome!', 'success');
+  } catch (err) {
+    toast(friendly(err), 'error');
+  } finally {
+    signupGate = null;
+    setBusy($('cfBtn'), false, 'Create family');
+  }
+});
+
+/* ── Logout ── */
+$('logoutBtn').addEventListener('click', () => signOut(auth));
+
+/* ── Auth tabs ── */
+document.querySelectorAll('.tab').forEach(tab => {
+  tab.addEventListener('click', () => {
+    document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t === tab));
+    $('signinForm').classList.toggle('hidden', tab.dataset.tab !== 'signin');
+    $('createForm').classList.toggle('hidden', tab.dataset.tab !== 'create');
+  });
+});
+
+/* ═══════════════════════════════════════════════════════════════
+   5. APP BOOT
+   ═══════════════════════════════════════════════════════════════ */
+async function bootApp() {
+  const famSnap = await getDoc(doc(db, 'families', me.familyId));
+  if (!famSnap.exists()) throw new Error('Family not found.');
+  family = { id: me.familyId, ...famSnap.data() };
+
+  $('authScreen').classList.add('hidden');
+  $('appScreen').classList.remove('hidden');
+
+  $('familyName').textContent = family.name || 'Family';
+  $('userName').textContent   = me.displayName || me.username;
+  $('addedByPill').textContent = 'by ' + (me.displayName || me.username);
+
+  const isOwner = me.role === 'owner';
+  $('roleBadge').textContent = isOwner ? 'Owner' : 'Member';
+  $('roleBadge').className   = 'badge ' + (isOwner ? 'badge-owner' : 'badge-member');
+  $('limitEdit').classList.toggle('hidden', !isOwner);
+  $('limitReadHint').classList.toggle('hidden', isOwner);
+  $('memberForm').classList.toggle('hidden', !isOwner);
+
+  if (isOwner) {
+    $('startDateInput').value = family.startDate || todayISO();
+  }
+
+  $('expDate').value = todayISO();
+  buildCategorySelect();
+
+  subscribeSettings();
+  subscribeExpenses();
+  subscribeMonthSpend();
+  loadMembers();
+}
+
+/* ── Category dropdown ── */
+function buildCategorySelect() {
+  $('expCategory').innerHTML = CATEGORIES
+    .map(c => `<option value="${c.id}">${c.emoji} ${c.label}</option>`)
+    .join('');
+}
+
+/* ── Quick date chips ── */
+document.querySelectorAll('.chip[data-days]').forEach(chip => {
+  chip.addEventListener('click', () => {
+    $('expDate').value = isoAddDays(Number(chip.dataset.days));
+  });
+});
+
+/* ═══════════════════════════════════════════════════════════════
+   6. ADD EXPENSE
+   ═══════════════════════════════════════════════════════════════ */
+$('expenseForm').addEventListener('submit', async e => {
+  e.preventDefault();
+
+  const date     = $('expDate').value || todayISO();
+  const amount   = Number($('expAmount').value);
+  const category = $('expCategory').value;
+  const note     = $('expNote').value.trim();
+
+  if (!(amount > 0)) return toast('Enter a valid amount.', 'error');
+  if (!date)         return toast('Pick a date.', 'error');
+
+  setBusy($('addBtn'), true, 'Adding…');
+  try {
+    await addDoc(collection(db, 'families', me.familyId, 'expenses'), {
+      amount,
+      category,
+      date,
+      note,
+      addedBy: me.uid,
+      addedByName: me.displayName || me.username,
+      createdAt: serverTimestamp(),
+      sortKey: `${date}_${String(Date.now()).padStart(13, '0')}`
+    });
+
+    const lim = settings.monthlyLimit || 0;
+    if (lim > 0) {
+      const spent = monthSpend + amount;
+      if (spent > lim) {
+        toast(`⚠️ Over monthly budget (${money(spent)} / ${money(lim)})`, 'error');
+      } else {
+        toast('Expense added.', 'success');
+      }
+    } else {
+      toast('Expense added.', 'success');
+    }
+
+    $('expAmount').value = '';
+    $('expNote').value   = '';
+  } catch (err) {
+    toast(friendly(err), 'error');
+  } finally {
+    setBusy($('addBtn'), false, 'Add expense');
+  }
+});
+
+/* ═══════════════════════════════════════════════════════════════
+   7. EXPENSES LISTENER + RENDER
+   ═══════════════════════════════════════════════════════════════ */
+function subscribeExpenses() {
+  if (unsubExpenses) unsubExpenses();
+  const q = query(
+    collection(db, 'families', me.familyId, 'expenses'),
+    orderBy('sortKey', 'desc'),
+    limit(pageSize)
+  );
+
+  unsubExpenses = onSnapshot(q, snap => {
+    expenses = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    renderEntries();
+    $('loadMoreBtn').classList.toggle('hidden', snap.size < pageSize);
+  }, err => {
+    console.error(err);
+    toast('Could not load expenses: ' + friendly(err), 'error');
+  });
+}
+
+$('loadMoreBtn').addEventListener('click', () => {
+  pageSize += 30;
+  subscribeExpenses();
+});
+
+function renderEntries() {
+  const box = $('entries');
+
+  if (!expenses.length) {
+    box.innerHTML = `<div class="empty">No expenses yet — add the first one above ☝️</div>`;
+    $('entryCount').textContent = '';
+    return;
+  }
+
+  $('entryCount').textContent = `${expenses.length} shown`;
+
+  const groups = new Map();
+  for (const ex of expenses) {
+    const key = ex.date || 'unknown';
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(ex);
+  }
+
+  let html = '';
+  for (const [date, list] of groups) {
+    const total = list.reduce((s, e) => s + Number(e.amount || 0), 0);
+    html += `
+      <div class="day-group">
+        <div class="day-head">
+          <span>${esc(date === 'unknown' ? 'No date' : fmtDate(date))}</span>
+          <span class="day-total">${money(total)}</span>
+        </div>
+        ${list.map(entryHTML).join('')}
+      </div>`;
+  }
+
+  box.innerHTML = html;
+  box.querySelectorAll('[data-del]').forEach(btn => {
+    btn.addEventListener('click', () => deleteExpense(btn.dataset.del));
+  });
+}
+
+function entryHTML(ex) {
+  const cat = CATEGORIES.find(c => c.id === ex.category)
+           || { emoji: '📦', label: ex.category || 'Other' };
+  const canDelete = me.role === 'owner' || ex.addedBy === me.uid;
+
+  return `
+    <div class="entry">
+      <div class="entry-icon">${cat.emoji}</div>
+      <div class="entry-main">
+        <div class="entry-cat">${esc(cat.label)}</div>
+        ${ex.note ? `<div class="entry-note">${esc(ex.note)}</div>` : ''}
+      </div>
+      <div class="entry-meta">
+        <div class="entry-amt">${money(ex.amount)}</div>
+        <div class="entry-by">${esc(ex.addedByName || 'Someone')}</div>
+      </div>
+      ${canDelete ? `<button class="del" data-del="${ex.id}" title="Delete">✕</button>` : ''}
+    </div>`;
+}
+
+async function deleteExpense(id) {
+  if (!confirm('Delete this expense?')) return;
+  try {
+    await deleteDoc(doc(db, 'families', me.familyId, 'expenses', id));
+    toast('Deleted.', 'success');
+  } catch (err) {
+    toast(friendly(err), 'error');
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   8. BUDGET — listeners + renderers
+   ═══════════════════════════════════════════════════════════════ */
+function subscribeSettings() {
+  if (unsubSettings) unsubSettings();
+  unsubSettings = onSnapshot(
+    doc(db, 'families', me.familyId, 'settings', 'config'),
+    snap => {
+      settings = snap.exists()
+        ? { monthlyLimit: 0, startDate: null, ...snap.data() }
+        : { monthlyLimit: 0, startDate: null };
+
+      if (me.role === 'owner' && document.activeElement !== $('limitInput')) {
+        $('limitInput').value = settings.monthlyLimit > 0 ? settings.monthlyLimit : '';
+      }
+      if (me.role === 'owner' && document.activeElement !== $('startDateInput')) {
+        $('startDateInput').value = settings.startDate || family.startDate || todayISO();
+      }
+      renderBudgetStrip();
+      renderSettingsSummary();
+    },
+    err => console.warn('settings listener:', err)
+  );
+}
+
+function subscribeMonthSpend() {
+  if (unsubMonth) unsubMonth();
+  const now = new Date();
+  const start = `${now.getFullYear()}-${pad(now.getMonth()+1)}-01`;
+  const end   = `${now.getFullYear()}-${pad(now.getMonth()+1)}-31`;
+
+  const q = query(
+    collection(db, 'families', me.familyId, 'expenses'),
+    where('date', '>=', start),
+    where('date', '<=', end)
+  );
+
+  unsubMonth = onSnapshot(q, snap => {
+    let sum = 0;
+    snap.forEach(d => { sum += Number(d.data().amount || 0); });
+    monthSpend = sum;
+    renderBudgetStrip();
+    renderSettingsSummary();
+  }, err => console.warn('month listener:', err));
+}
+
+/* ── Live bar on the Add Expense card ── */
+function renderBudgetStrip() {
+  const spent = monthSpend;
+  const lim   = settings.monthlyLimit || 0;
+  const box   = $('budgetStrip');
+  const isOwner = me && me.role === 'owner';
+
+  if (!lim) {
+    box.innerHTML = `
+      <div class="budget-empty">
+        <span><strong>${money(spent)}</strong> spent this month · no budget set</span>
+        ${isOwner ? '<button class="link-btn" id="openSettingsFromStrip">Set a limit →</button>' : ''}
+      </div>`;
+  } else {
+    const pct  = Math.min(100, (spent / lim) * 100);
+    const remaining = lim - spent;
+    const over = remaining < 0;
+    const warn = !over && pct >= 80;
+
+    box.innerHTML = `
+      <div class="budget-top">
+        <div class="budget-left"><strong>${money(remaining > 0 ? remaining : 0)}</strong> left</div>
+        <div class="budget-right">${money(spent)} of ${money(lim)}</div>
+      </div>
+      <div class="budget-bar"><i class="${over ? 'over' : warn ? 'warn' : ''}" style="width:${pct}%"></i></div>
+      <div class="budget-foot">
+        <span class="spent">${pct.toFixed(0)}% used</span>
+        <span class="left ${over ? 'over' : warn ? 'warn' : ''}">
+          ${over ? `⚠️ Over by ${money(Math.abs(remaining))}` : `${money(remaining)} remaining`}
+        </span>
+      </div>`;
+  }
+
+  const btn = $('openSettingsFromStrip');
+  if (btn) btn.addEventListener('click', openSettings);
+}
+
+/* ── Summary inside Settings modal ── */
+function renderSettingsSummary() {
+  const spent = monthSpend;
+  const lim   = settings.monthlyLimit || 0;
+  const el    = $('settingsSummary');
+  if (!el) return;
+
+  if (!lim) {
+    el.innerHTML = `<span>This month:</span> ${money(spent)} spent · <span>no limit set</span>`;
+  } else {
+    const remaining = lim - spent;
+    const over = remaining < 0;
+    el.innerHTML = over
+      ? `<span>This month:</span> ${money(spent)} of ${money(lim)} · <strong style="color:var(--red)">over by ${money(Math.abs(remaining))}</strong>`
+      : `<span>This month:</span> ${money(spent)} of ${money(lim)} · <strong style="color:var(--green)">${money(remaining)} left</strong>`;
+  }
+}
+
+/* ── Open/close settings modal ── */
+function openSettings() {
+  $('settingsModal').classList.remove('hidden');
+  document.body.style.overflow = 'hidden';
+  if (me && me.role === 'owner') {
+    $('limitInput').value = settings.monthlyLimit > 0 ? settings.monthlyLimit : '';
+    $('startDateInput').value = settings.startDate || family?.startDate || todayISO();
+  }
+}
+function closeSettings() {
+  $('settingsModal').classList.add('hidden');
+  document.body.style.overflow = '';
+}
+$('settingsBtn').addEventListener('click', openSettings);
+$('settingsClose').addEventListener('click', closeSettings);
+$('settingsModal').addEventListener('click', e => {
+  if (e.target === $('settingsModal')) closeSettings();
+});
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape' && !$('settingsModal').classList.contains('hidden')) closeSettings();
+});
+
+/* ── Save budget ── */
+$('saveLimitBtn').addEventListener('click', async () => {
+  if (me.role !== 'owner') return;
+  const btn = $('saveLimitBtn');
+  setBusy(btn, true, 'Saving…');
+  try {
+    const limitVal = Number($('limitInput').value);
+    const startVal = $('startDateInput').value || family.startDate || todayISO();
+
+    await setDoc(
+      doc(db, 'families', me.familyId, 'settings', 'config'),
+      {
+        monthlyLimit: limitVal > 0 ? limitVal : 0,
+        startDate: startVal
+      },
+      { merge: true }
+    );
+
+    await setDoc(
+      doc(db, 'families', me.familyId),
+      { startDate: startVal },
+      { merge: true }
+    );
+
+    family.startDate = startVal;
+    toast('Budget saved.', 'success');
+  } catch (err) {
+    toast(friendly(err), 'error');
+  } finally {
+    setBusy(btn, false, 'Save budget');
+  }
+});
+
+/* ═══════════════════════════════════════════════════════════════
+   9. MEMBERS
+   ═══════════════════════════════════════════════════════════════ */
+const initials = name => (name || '?')
+  .split(/\s+/).filter(Boolean).slice(0, 2)
+  .map(w => w[0].toUpperCase()).join('');
+
+async function loadMembers() {
+  try {
+    const q = query(collection(db, 'users'), where('familyId', '==', me.familyId));
+    const snap = await getDocs(q);
+    const list = snap.docs.map(d => ({ uid: d.id, ...d.data() }));
+
+    list.sort((a, b) => (a.role === 'owner' ? -1 : 1) - (b.role === 'owner' ? -1 : 1) ||
+                         (a.displayName || '').localeCompare(b.displayName || ''));
+
+    $('memberList').innerHTML = list.map(m => `
+      <div class="member">
+        <span class="avatar">${esc(initials(m.displayName))}</span>
+        <span class="member-name">${esc(m.displayName || m.username)}${m.uid === me.uid ? ' <em>(you)</em>' : ''}</span>
+        <span class="badge ${m.role === 'owner' ? 'badge-owner' : 'badge-member'}">${m.role}</span>
+      </div>`).join('') || '<div class="muted" style="font-size:13px">No members yet.</div>';
+  } catch (err) {
+    console.warn('members:', err);
+  }
+}
+
+$('memberForm').addEventListener('submit', async e => {
+  e.preventDefault();
+  if (me.role !== 'owner') return;
+
+  const displayName = $('mName').value.trim();
+  const username    = $('mUsername').value.trim().toLowerCase();
+  const password    = $('mPassword').value;
+
+  if (!/^[a-z0-9._]{3,20}$/.test(username))
+    return toast('Username: 3–20 chars — letters, numbers, dot or underscore only.', 'error');
+  if (password.length < 6)
+    return toast('Password must be at least 6 characters.', 'error');
+
+  const btn = $('mBtn');
+  setBusy(btn, true, 'Adding…');
+  let secondary = null;
+
+  try {
+    secondary = initializeApp(firebaseConfig, 'creator-' + Date.now());
+    const sAuth = getAuth(secondary);
+    const cred  = await createUserWithEmailAndPassword(sAuth, emailFor(username), password);
+    const newUid = cred.user.uid;
+    await signOut(sAuth);
+
+    await setDoc(doc(db, 'users', newUid), {
+      familyId: me.familyId,
+      username,
+      displayName,
+      role: 'member',
+      createdAt: serverTimestamp()
+    });
+
+    $('mName').value = '';
+    $('mUsername').value = '';
+    $('mPassword').value = '';
+    toast('Member added.', 'success');
+    loadMembers();
+  } catch (err) {
+    toast(friendly(err), 'error');
+  } finally {
+    if (secondary) { try { await deleteApp(secondary); } catch (e) {} }
+    setBusy(btn, false, 'Add member');
+  }
+});
+
+/* ═══════════════════════════════════════════════════════════════
+   10. INIT
+   ═══════════════════════════════════════════════════════════════ */
+$('expDate').value = todayISO();
+$('cfStartDate').value = todayISO();
+</script>
+<script>
+/* ── Summary page link (adds 📊 Summary button to topbar) ── */
+(function () {
+  function addSummaryLink() {
+    const userChip = document.querySelector('.user-chip');
+    if (!userChip) return;
+
+    // Guard against double-injection
+    if (document.getElementById('summaryLinkBtn')) return;
+
+    const link = document.createElement('a');
+    link.id = 'summaryLinkBtn';
+    link.href = 'summary.html';
+    link.className = 'icon-btn';
+    link.title = 'Monthly summary';
+    link.setAttribute('aria-label', 'Monthly summary');
+    link.style.textDecoration = 'none';
+    link.textContent = '📊';
+
+    // Insert just before the settings gear so order is: name · role · summary · settings · logout
+    const settingsBtn = document.getElementById('settingsBtn');
+    if (settingsBtn && settingsBtn.parentNode === userChip) {
+      userChip.insertBefore(link, settingsBtn);
+    } else {
+      userChip.appendChild(link);
+    }
+  }
+
+  // The topbar exists in the initial DOM, but the app screen is hidden until login.
+  // We add the link regardless — it stays hidden with the topbar until signed in,
+  // and is visible the moment the app screen unlocks.
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', addSummaryLink);
+  } else {
+    addSummaryLink();
+  }
+})();
+</script>
+</body>
+</html>

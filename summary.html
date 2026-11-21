@@ -1,0 +1,791 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Summary · Family Expenses</title>
+
+<!--
+  ═══════════════════════════════════════════════════════════════════
+   SUMMARY PAGE
+  ═══════════════════════════════════════════════════════════════════
+  Uses the same Firebase project as index.html. It reads the family
+  settings and expenses for the selected month and renders detailed
+  analytics:
+    • Month switcher (current / previous / any past month)
+    • Budget vs actual, remaining, over/under
+    • Category breakdown with bars and % share
+    • Member contributions
+    • Top 5 biggest expenses
+    • Daily spend sparkline
+    • Quick stats (avg/day, biggest day, entries count, etc.)
+  ═══════════════════════════════════════════════════════════════════
+-->
+
+<style>
+  :root{
+    --bg:#f4f6fb;
+    --card:#ffffff;
+    --text:#161a25;
+    --muted:#6b7280;
+    --line:#e9ecf3;
+    --accent:#4f46e5;
+    --accent-soft:#eef0ff;
+    --green:#0f9d76;
+    --amber:#f59e0b;
+    --red:#e5484d;
+    --radius:16px;
+  }
+  *{box-sizing:border-box; -webkit-tap-highlight-color: transparent}
+  html,body{height:100%}
+  body{
+    margin:0;
+    font-family:"Inter",system-ui,-apple-system,"Segoe UI",Roboto,Arial,sans-serif;
+    background:var(--bg); color:var(--text);
+    -webkit-font-smoothing:antialiased;
+    overflow-x:hidden;
+  }
+  .hidden{display:none !important}
+  .muted{color:var(--muted)}
+
+  /* ───────── AUTH / LOADING ───────── */
+  .auth-wrap{
+    min-height:100vh; display:grid; place-items:center; padding:16px;
+    background:
+      radial-gradient(900px 520px at 0% 0%, #dfe5ff 0%, transparent 62%),
+      radial-gradient(800px 520px at 100% 100%, #d7f5ea 0%, transparent 62%),
+      var(--bg);
+  }
+  .auth-card{
+    width:min(420px,100%); background:#fff; border:1px solid var(--line);
+    border-radius:22px; padding:24px; text-align:center;
+    box-shadow:0 24px 60px -28px rgba(20,30,60,.35);
+  }
+  .logo{
+    width:52px;height:52px;border-radius:15px;display:grid;place-items:center;
+    background:linear-gradient(135deg,#6366f1,#22c55e); font-size:24px;margin:0 auto 14px;
+    box-shadow:0 10px 22px -10px rgba(79,70,229,.85);
+  }
+  .auth-card h1{font-size:18px;margin:0 0 6px;letter-spacing:-.02em}
+  .auth-card p{color:var(--muted);font-size:13px;margin:0 0 18px}
+  .primary{
+    display:inline-block;border:0;border-radius:12px;padding:12px 22px;font-weight:700;font-size:14px;
+    color:#fff;background:linear-gradient(135deg,#5b54f0,#4338ca);
+    box-shadow:0 12px 24px -14px rgba(67,56,202,.95);text-decoration:none;
+    transition:filter .15s;
+  }
+  .primary:hover{filter:brightness(1.07)}
+
+  /* ───────── APP LAYOUT ───────── */
+  .app{max-width:1080px;margin:0 auto;padding:16px 14px 60px}
+  @media(min-width:641px){.app{padding:22px 20px 70px}}
+
+  .topbar{
+    display:flex;justify-content:space-between;align-items:center;gap:12px;
+    flex-wrap:wrap;margin-bottom:16px;
+  }
+  .brand{display:flex;gap:10px;align-items:center;min-width:0}
+  .logo.sm{width:36px;height:36px;border-radius:11px;font-size:17px;margin:0}
+  .family-name{font-weight:800;font-size:16px;letter-spacing:-.01em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:190px}
+  .family-sub{font-size:11.5px;color:var(--muted)}
+  .nav-actions{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+  .ghost{
+    background:#fff;border:1px solid var(--line);border-radius:10px;
+    padding:9px 12px;font-size:13px;font-weight:600;color:#444;transition:.15s;
+    text-decoration:none;display:inline-flex;align-items:center;gap:6px;
+  }
+  .ghost:hover{background:#f7f8fc;border-color:#d9dded}
+
+  .card{
+    background:var(--card);border:1px solid var(--line);border-radius:var(--radius);
+    padding:16px;box-shadow:0 14px 34px -28px rgba(20,30,60,.55);
+  }
+  @media(min-width:641px){.card{padding:18px}}
+  .card-head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:14px;flex-wrap:wrap}
+  .card-head h2{font-size:15px;margin:0;font-weight:700;letter-spacing:-.01em}
+  .pill{font-size:11px;color:var(--muted);background:#f3f5fa;padding:4px 9px;border-radius:999px;font-weight:600;white-space:nowrap}
+
+  /* ───────── MONTH SWITCHER ───────── */
+  .month-bar{
+    display:flex;align-items:center;justify-content:space-between;gap:10px;
+    background:#fff;border:1px solid var(--line);border-radius:14px;
+    padding:10px 12px;margin-bottom:16px;
+    box-shadow:0 14px 34px -28px rgba(20,30,60,.55);
+  }
+  .month-nav{
+    width:36px;height:36px;border-radius:10px;border:1px solid var(--line);
+    background:#fff;display:grid;place-items:center;font-size:14px;font-weight:700;
+    color:var(--muted);transition:.15s;flex:none;
+  }
+  .month-nav:hover:not(:disabled){background:#f7f8fc;color:var(--accent);border-color:#c9cdf5}
+  .month-nav:disabled{opacity:.35;cursor:not-allowed}
+  .month-label{text-align:center;flex:1;min-width:0}
+  .month-label .m-title{font-weight:800;font-size:15px;letter-spacing:-.01em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .month-label .m-sub{font-size:11px;color:var(--muted);font-weight:600;margin-top:2px}
+  .month-now{
+    border:0;background:transparent;color:var(--accent);font-size:11.5px;
+    font-weight:700;text-decoration:underline;text-underline-offset:2px;padding:0;
+  }
+
+  /* ───────── STATS GRID ───────── */
+  .stats{display:grid;grid-template-columns:repeat(2,1fr);gap:10px;margin-bottom:16px}
+  @media(min-width:641px){.stats{grid-template-columns:repeat(4,1fr);gap:12px}}
+  .stat{
+    background:#fff;border:1px solid var(--line);border-radius:14px;padding:12px 13px;
+    box-shadow:0 14px 34px -28px rgba(20,30,60,.55);
+  }
+  .stat .lbl{font-size:10.5px;text-transform:uppercase;letter-spacing:.05em;color:#8b93a7;font-weight:700;margin-bottom:5px}
+  .stat .val{font-size:17px;font-weight:800;letter-spacing:-.02em;line-height:1.2;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .stat .val.green{color:var(--green)}
+  .stat .val.red{color:var(--red)}
+  .stat .val.amber{color:var(--amber)}
+  .stat .sub{font-size:11px;color:var(--muted);font-weight:600;margin-top:3px}
+
+  /* ───────── BUDGET PANEL ───────── */
+  .budget-panel{
+    padding:14px 16px;border-radius:14px;margin-bottom:16px;
+    background:linear-gradient(135deg,#f7f8ff,#f2f5ff);
+    border:1px solid #e7e9fb;
+  }
+  .budget-top{display:flex;justify-content:space-between;align-items:baseline;gap:10px;margin-bottom:10px;flex-wrap:wrap}
+  .budget-top .b-left{font-size:13px;font-weight:700;color:#3a4152}
+  .budget-top .b-left strong{font-size:20px;font-weight:800;letter-spacing:-.02em;color:var(--text)}
+  .budget-top .b-right{font-size:12px;color:var(--muted);font-weight:600}
+  .budget-track{height:10px;border-radius:99px;background:#e3e6f5;overflow:hidden}
+  .budget-track i{
+    display:block;height:100%;border-radius:99px;
+    background:linear-gradient(90deg,#5b54f0,#818cf8);
+    transition:width .4s ease;
+  }
+  .budget-track i.warn{background:linear-gradient(90deg,#f59e0b,#fbbf24)}
+  .budget-track i.over{background:linear-gradient(90deg,#f97316,#e5484d)}
+  .budget-foot{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-top:9px;font-size:11.5px;font-weight:600;flex-wrap:wrap}
+  .budget-foot .used{color:var(--muted)}
+  .budget-foot .rem{font-weight:700;color:var(--green)}
+  .budget-foot .rem.warn{color:var(--amber)}
+  .budget-foot .rem.over{color:var(--red)}
+
+  /* ───────── TWO-COLUMN PANELS ───────── */
+  .panels{display:grid;grid-template-columns:1fr;gap:16px;margin-bottom:16px}
+  @media(min-width:880px){.panels{grid-template-columns:1fr 1fr}}
+
+  /* ───────── CATEGORY BREAKDOWN ───────── */
+  .cat-list{display:flex;flex-direction:column;gap:11px}
+  .cat-row{display:flex;flex-direction:column;gap:5px}
+  .cat-top{display:flex;align-items:center;gap:9px}
+  .cat-emoji{font-size:16px;flex:none}
+  .cat-name{flex:1;font-weight:700;font-size:13px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .cat-amt{font-weight:800;font-size:13px;white-space:nowrap}
+  .cat-pct{font-size:11px;color:var(--muted);font-weight:600;min-width:36px;text-align:right;white-space:nowrap}
+  .cat-bar{height:7px;border-radius:99px;background:#eef0f6;overflow:hidden}
+  .cat-bar i{display:block;height:100%;border-radius:99px;background:linear-gradient(90deg,#6366f1,#818cf8);transition:width .4s}
+
+  /* ───────── MEMBER BREAKDOWN ───────── */
+  .mem-list{display:flex;flex-direction:column;gap:11px}
+  .mem-row{display:flex;align-items:center;gap:10px}
+  .avatar{
+    width:32px;height:32px;border-radius:50%;background:var(--accent-soft);
+    color:#4338ca;display:grid;place-items:center;font-size:11.5px;font-weight:800;flex:none;
+  }
+  .mem-main{flex:1;min-width:0}
+  .mem-name{font-weight:700;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .mem-bar{height:7px;border-radius:99px;background:#eef0f6;overflow:hidden;margin-top:5px}
+  .mem-bar i{display:block;height:100%;border-radius:99px;background:linear-gradient(90deg,#22c55e,#0f9d76);transition:width .4s}
+  .mem-meta{text-align:right;flex:none}
+  .mem-amt{font-weight:800;font-size:13px;white-space:nowrap}
+  .mem-pct{font-size:10.5px;color:var(--muted);font-weight:600}
+
+  /* ───────── TOP EXPENSES ───────── */
+  .top-list{display:flex;flex-direction:column}
+  .top-row{
+    display:flex;align-items:center;gap:11px;padding:10px 4px;
+    border-bottom:1px solid var(--line);
+  }
+  .top-row:last-child{border-bottom:0}
+  .top-rank{
+    width:24px;height:24px;border-radius:8px;background:#f3f5fa;
+    color:var(--muted);display:grid;place-items:center;font-size:11.5px;font-weight:800;flex:none;
+  }
+  .top-rank.r1{background:linear-gradient(135deg,#fde68a,#fbbf24);color:#7c2d12}
+  .top-rank.r2{background:linear-gradient(135deg,#e5e7eb,#cbd5e1);color:#334155}
+  .top-rank.r3{background:linear-gradient(135deg,#fed7aa,#fdba74);color:#7c2d12}
+  .top-main{flex:1;min-width:0}
+  .top-cat{font-weight:700;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .top-note{font-size:11.5px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .top-meta{text-align:right;flex:none}
+  .top-amt{font-weight:800;font-size:13.5px;white-space:nowrap}
+  .top-date{font-size:10.5px;color:var(--muted);white-space:nowrap}
+
+  /* ───────── DAILY SPARK ───────── */
+  .spark{
+    display:flex;align-items:flex-end;gap:3px;height:70px;padding:0 2px;
+    margin-bottom:6px;
+  }
+  .spark .d{
+    flex:1;min-width:0;border-radius:4px 4px 0 0;
+    background:linear-gradient(180deg,#818cf8,#5b54f0);
+    transition:height .4s, background .2s;position:relative;
+  }
+  .spark .d.zero{background:#eef0f6}
+  .spark-labels{display:flex;justify-content:space-between;font-size:10px;color:var(--muted);font-weight:600}
+  .spark-peak{font-size:11px;color:var(--muted);font-weight:600;margin-top:6px}
+
+  /* ───────── EMPTY ───────── */
+  .empty{text-align:center;color:var(--muted);font-size:13px;padding:26px 0}
+
+  /* ───────── SKELETON ───────── */
+  .skeleton{
+    background:linear-gradient(90deg,#eef0f6 25%,#f6f7fb 50%,#eef0f6 75%);
+    background-size:200% 100%;animation:shimmer 1.2s infinite;
+    border-radius:8px;height:14px;
+  }
+  @keyframes shimmer{0%{background-position:200% 0}100%{background-position:-200% 0}}
+
+  /* ───────── TOAST ───────── */
+  #toast{
+    position:fixed;left:50%;bottom:20px;transform:translate(-50%,22px);
+    background:#161a25;color:#fff;padding:12px 16px;border-radius:12px;
+    font-size:13px;font-weight:600;opacity:0;pointer-events:none;
+    transition:opacity .25s, transform .25s;z-index:99;
+    max-width:calc(100vw - 32px);width:max-content;
+    box-shadow:0 18px 40px -18px rgba(0,0,0,.6);text-align:center;
+  }
+  #toast.show{opacity:1;transform:translate(-50%,0)}
+  #toast.error{background:var(--red)}
+</style>
+</head>
+<body>
+
+<!-- ══════════════ LOADING / NO AUTH ══════════════ -->
+<div id="gateScreen" class="auth-wrap">
+  <div class="auth-card">
+    <div class="logo">📊</div>
+    <h1>Summary</h1>
+    <p id="gateMsg">Loading your family data…</p>
+    <a href="index.html" class="primary" id="gateBtn">Go to app</a>
+  </div>
+</div>
+
+<!-- ══════════════ SUMMARY APP ══════════════ -->
+<div id="appScreen" class="app hidden">
+
+  <header class="topbar">
+    <div class="brand">
+      <div class="logo sm">📊</div>
+      <div>
+        <div class="family-name" id="familyName">Family</div>
+        <div class="family-sub">Monthly summary</div>
+      </div>
+    </div>
+    <div class="nav-actions">
+      <a href="index.html" class="ghost">← Back to expenses</a>
+    </div>
+  </header>
+
+  <!-- Month switcher -->
+  <div class="month-bar">
+    <button class="month-nav" id="prevMonth" type="button" aria-label="Previous month">‹</button>
+    <div class="month-label">
+      <div class="m-title" id="monthTitle">—</div>
+      <div class="m-sub" id="monthSub">
+        <button class="month-now hidden" id="thisMonthBtn" type="button">Jump to this month</button>
+      </div>
+    </div>
+    <button class="month-nav" id="nextMonth" type="button" aria-label="Next month">›</button>
+  </div>
+
+  <!-- KPI stats -->
+  <div class="stats" id="statsRow">
+    <div class="stat"><div class="lbl">Total spent</div><div class="val" id="kTotal">—</div><div class="sub" id="kTotalSub">—</div></div>
+    <div class="stat"><div class="lbl">Budget</div><div class="val" id="kBudget">—</div><div class="sub" id="kBudgetSub">—</div></div>
+    <div class="stat"><div class="lbl">Entries</div><div class="val" id="kEntries">—</div><div class="sub" id="kEntriesSub">—</div></div>
+    <div class="stat"><div class="lbl">Avg / day</div><div class="val" id="kAvg">—</div><div class="sub" id="kAvgSub">—</div></div>
+  </div>
+
+  <!-- Budget vs actual -->
+  <div class="card" style="margin-bottom:16px">
+    <div class="card-head">
+      <h2>Budget vs actual</h2>
+      <span class="pill" id="budgetStatusPill">—</span>
+    </div>
+    <div class="budget-panel" id="budgetPanel">
+      <div class="budget-top">
+        <div class="b-left"><strong id="budgetRemaining">—</strong> <span id="budgetRemainingLbl">remaining</span></div>
+        <div class="b-right" id="budgetOf">—</div>
+      </div>
+      <div class="budget-track"><i id="budgetBar" style="width:0%"></i></div>
+      <div class="budget-foot">
+        <span class="used" id="budgetUsed">—</span>
+        <span class="rem" id="budgetDelta">—</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Category + Members side by side -->
+  <div class="panels">
+    <section class="card">
+      <div class="card-head">
+        <h2>Spending by category</h2>
+        <span class="pill" id="catCountPill">—</span>
+      </div>
+      <div id="catList" class="cat-list"></div>
+    </section>
+
+    <section class="card">
+      <div class="card-head">
+        <h2>Spending by member</h2>
+        <span class="pill" id="memCountPill">—</span>
+      </div>
+      <div id="memList" class="mem-list"></div>
+    </section>
+  </div>
+
+  <!-- Top 5 + Daily -->
+  <div class="panels">
+    <section class="card">
+      <div class="card-head">
+        <h2>Top 5 biggest expenses</h2>
+        <span class="pill">largest first</span>
+      </div>
+      <div id="topList" class="top-list"></div>
+    </section>
+
+    <section class="card">
+      <div class="card-head">
+        <h2>Daily spend</h2>
+        <span class="pill" id="sparkPill">—</span>
+      </div>
+      <div id="spark" class="spark"></div>
+      <div class="spark-labels"><span>1</span><span id="sparkMid">15</span><span id="sparkEnd">31</span></div>
+      <div class="spark-peak" id="sparkPeak">—</div>
+    </section>
+  </div>
+
+</div>
+
+<div id="toast"></div>
+
+<script type="module">
+/* ═══════════════════════════════════════════════════════════════
+   1. FIREBASE CONFIG  ← must match index.html
+   ═══════════════════════════════════════════════════════════════ */
+const firebaseConfig = {
+  apiKey: "AIzaSyDKzv-iAT0VraS9BhWNZoD7fdt0K6BGEn8",
+  authDomain: "family-ledger-e49c9.firebaseapp.com",
+  projectId: "family-ledger-e49c9",
+  storageBucket: "family-ledger-e49c9.firebasestorage.app",
+  messagingSenderId: "934201376486",
+  appId: "1:934201376486:web:c8d2aca16dc13de8568527"
+};
+
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-app.js";
+import { getAuth, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-auth.js";
+import {
+  getFirestore, doc, getDoc, collection, query, where, getDocs
+} from "https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore.js";
+
+const app  = initializeApp(firebaseConfig);
+const auth = getAuth(app);
+const db   = getFirestore(app);
+
+/* ═══════════════════════════════════════════════════════════════
+   2. CONSTANTS
+   ═══════════════════════════════════════════════════════════════ */
+const CATEGORIES = [
+  { id: 'bills',     label: 'Bills & Utilities', emoji: '🧾' },
+  { id: 'groceries', label: 'Groceries',         emoji: '🛒' },
+  { id: 'food',      label: 'Food & Outing',     emoji: '🍽️' },
+  { id: 'clothes',   label: 'Clothes',           emoji: '👕' },
+  { id: 'transport', label: 'Transport & Fuel',  emoji: '⛽' },
+  { id: 'health',    label: 'Health & Medical',  emoji: '💊' },
+  { id: 'education', label: 'Education',         emoji: '🎓' },
+  { id: 'home',      label: 'Home & Repairs',    emoji: '🏠' },
+  { id: 'gifts',     label: 'Gifts & Festivals', emoji: '🎁' },
+  { id: 'misc',      label: 'Miscellaneous',     emoji: '📦' }
+];
+const CAT_MAP = Object.fromEntries(CATEGORIES.map(c => [c.id, c]));
+
+const $ = id => document.getElementById(id);
+const pad = n => String(n).padStart(2, '0');
+const esc = s => String(s ?? '').replace(/[&<>"']/g,
+  c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
+
+const MONTHS_LONG = ['January','February','March','April','May','June',
+                     'July','August','September','October','November','December'];
+const MONTHS_SHORT = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+const DOW = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+
+const todayISO = () => { const d = new Date(); return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`; };
+
+/* ═══════════════════════════════════════════════════════════════
+   3. STATE
+   ═══════════════════════════════════════════════════════════════ */
+let me      = null;
+let family  = null;
+let settings = { monthlyLimit: 0, startDate: null };
+
+// selected month anchor: { y, m } where m is 1-based
+const now = new Date();
+let cursor = { y: now.getFullYear(), m: now.getMonth() + 1 };
+
+let currentExpenses = [];   // for selected month
+let loading = false;
+
+const money = n => {
+  const v = Number(n) || 0;
+  const cur = (family && family.currency) || '₹';
+  return cur + v.toLocaleString(undefined, { maximumFractionDigits: 2 });
+};
+
+let toastTimer = null;
+function toast(msg, type = '') {
+  const t = $('toast');
+  t.textContent = msg;
+  t.className = 'show ' + type;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { t.className = ''; }, 3200);
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   4. AUTH GATE
+   ═══════════════════════════════════════════════════════════════ */
+onAuthStateChanged(auth, async user => {
+  if (!user) {
+    $('gateMsg').textContent = 'Please sign in first.';
+    $('gateBtn').textContent = 'Sign in';
+    return;
+  }
+  try {
+    const snap = await getDoc(doc(db, 'users', user.uid));
+    if (!snap.exists()) {
+      $('gateMsg').textContent = 'No profile found.';
+      return;
+    }
+    me = { uid: user.uid, ...snap.data() };
+
+    const famSnap = await getDoc(doc(db, 'families', me.familyId));
+    if (!famSnap.exists()) {
+      $('gateMsg').textContent = 'Family not found.';
+      return;
+    }
+    family = { id: me.familyId, ...famSnap.data() };
+
+    // settings
+    try {
+      const setSnap = await getDoc(doc(db, 'families', me.familyId, 'settings', 'config'));
+      if (setSnap.exists()) settings = { monthlyLimit: 0, startDate: null, ...setSnap.data() };
+    } catch (e) { /* ignore */ }
+
+    $('gateScreen').classList.add('hidden');
+    $('appScreen').classList.remove('hidden');
+    $('familyName').textContent = family.name || 'Family';
+
+    bindMonthNav();
+    await loadMonth();
+  } catch (err) {
+    console.error(err);
+    $('gateMsg').textContent = 'Could not load your data.';
+  }
+});
+
+/* ═══════════════════════════════════════════════════════════════
+   5. MONTH NAVIGATION
+   ═══════════════════════════════════════════════════════════════ */
+function bindMonthNav() {
+  $('prevMonth').addEventListener('click', () => {
+    cursor.m -= 1;
+    if (cursor.m < 1) { cursor.m = 12; cursor.y -= 1; }
+    loadMonth();
+  });
+  $('nextMonth').addEventListener('click', () => {
+    if (isCurrentMonth()) return;
+    cursor.m += 1;
+    if (cursor.m > 12) { cursor.m = 1; cursor.y += 1; }
+    loadMonth();
+  });
+  $('thisMonthBtn').addEventListener('click', () => {
+    const d = new Date();
+    cursor = { y: d.getFullYear(), m: d.getMonth() + 1 };
+    loadMonth();
+  });
+}
+
+function isCurrentMonth() {
+  const d = new Date();
+  return cursor.y === d.getFullYear() && cursor.m === d.getMonth() + 1;
+}
+
+function monthKey() { return `${cursor.y}-${pad(cursor.m)}`; }
+function monthLabelLong() { return `${MONTHS_LONG[cursor.m-1]} ${cursor.y}`; }
+function monthRange() {
+  const y = cursor.y, m = cursor.m;
+  const start = `${y}-${pad(m)}-01`;
+  const lastDay = new Date(y, m, 0).getDate();
+  const end = `${y}-${pad(m)}-${pad(lastDay)}`;
+  return { start, end, lastDay };
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   6. LOAD MONTH
+   ═══════════════════════════════════════════════════════════════ */
+async function loadMonth() {
+  if (loading) return;
+  loading = true;
+
+  $('prevMonth').disabled = true;
+  $('nextMonth').disabled = true;
+  $('monthTitle').textContent = monthLabelLong();
+  $('thisMonthBtn').classList.toggle('hidden', isCurrentMonth());
+  $('monthSub').firstChild && ($('monthSub').firstChild.textContent = '');
+
+  const { start, end, lastDay } = monthRange();
+  $('sparkEnd').textContent = String(lastDay);
+  $('sparkMid').textContent = String(Math.ceil(lastDay / 2));
+
+  showSkeletons();
+
+  try {
+    const q = query(
+      collection(db, 'families', me.familyId, 'expenses'),
+      where('date', '>=', start),
+      where('date', '<=', end)
+    );
+    const snap = await getDocs(q);
+    currentExpenses = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+
+    // Read the *current* family settings so budget reflects this month's rules
+    let monthLimit = settings.monthlyLimit || 0;
+    try {
+      const setSnap = await getDoc(doc(db, 'families', me.familyId, 'settings', 'config'));
+      if (setSnap.exists()) {
+        settings = { monthlyLimit: 0, startDate: null, ...setSnap.data() };
+        monthLimit = settings.monthlyLimit || 0;
+      }
+    } catch (e) { /* ignore */ }
+
+    renderAll(currentExpenses, monthLimit, lastDay);
+  } catch (err) {
+    console.error(err);
+    toast('Could not load month data.', 'error');
+  } finally {
+    loading = false;
+    $('prevMonth').disabled = false;
+    $('nextMonth').disabled = isCurrentMonth();
+    $('thisMonthBtn').classList.toggle('hidden', isCurrentMonth());
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   7. SKELETONS
+   ═══════════════════════════════════════════════════════════════ */
+function showSkeletons() {
+  $('kTotal').textContent = '—';
+  $('kBudget').textContent = '—';
+  $('kEntries').textContent = '—';
+  $('kAvg').textContent = '—';
+  ['kTotalSub','kBudgetSub','kEntriesSub','kAvgSub'].forEach(id => $(id).textContent = '');
+
+  $('catList').innerHTML = Array.from({length: 4}, () =>
+    `<div class="skeleton" style="height:26px"></div>`).join('');
+  $('memList').innerHTML = Array.from({length: 3}, () =>
+    `<div class="skeleton" style="height:26px"></div>`).join('');
+  $('topList').innerHTML = Array.from({length: 3}, () =>
+    `<div class="skeleton" style="height:34px;margin-bottom:8px"></div>`).join('');
+  $('spark').innerHTML = '';
+  $('sparkPeak').textContent = '—';
+  $('budgetBar').style.width = '0%';
+  $('budgetRemaining').textContent = '—';
+  $('budgetRemainingLbl').textContent = '';
+  $('budgetOf').textContent = '—';
+  $('budgetUsed').textContent = '—';
+  $('budgetDelta').textContent = '';
+  $('budgetStatusPill').textContent = '—';
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   8. RENDER EVERYTHING
+   ═══════════════════════════════════════════════════════════════ */
+function renderAll(expenses, monthLimit, lastDay) {
+  const total = expenses.reduce((s, e) => s + Number(e.amount || 0), 0);
+
+  /* ── KPI stats ── */
+  $('kTotal').textContent = money(total);
+  const isCur = isCurrentMonth();
+  const today = new Date().getDate();
+  const daysElapsed = isCur ? today : lastDay;
+  $('kTotalSub').textContent = `${expenses.length} entr${expenses.length === 1 ? 'y' : 'ies'} · ${monthLabelLong()}`;
+
+  if (monthLimit > 0) {
+    $('kBudget').textContent = money(monthLimit);
+    const rem = monthLimit - total;
+    $('kBudgetSub').textContent = rem >= 0 ? `${money(rem)} left` : `over by ${money(Math.abs(rem))}`;
+    $('kBudget').className = 'val ' + (rem >= 0 ? 'green' : 'red');
+  } else {
+    $('kBudget').textContent = 'None';
+    $('kBudget').className = 'val';
+    $('kBudgetSub').textContent = 'no limit set';
+  }
+
+  $('kEntries').textContent = String(expenses.length);
+  $('kEntriesSub').textContent = `across ${lastDay} days`;
+
+  const avg = daysElapsed > 0 ? total / daysElapsed : 0;
+  $('kAvg').textContent = money(avg);
+  $('kAvgSub').textContent = isCur ? `over ${daysElapsed} day${daysElapsed===1?'':'s'}` : `over ${lastDay} days`;
+
+  /* ── Budget panel ── */
+  const bar = $('budgetBar');
+  if (monthLimit > 0) {
+    const pct = Math.min(100, (total / monthLimit) * 100);
+    const rem = monthLimit - total;
+    const over = rem < 0;
+    const warn = !over && pct >= 80;
+
+    $('budgetRemaining').textContent = rem >= 0 ? money(rem) : money(Math.abs(rem));
+    $('budgetRemainingLbl').textContent = rem >= 0 ? 'remaining' : 'over budget';
+    $('budgetOf').textContent = `of ${money(monthLimit)}`;
+    bar.style.width = pct + '%';
+    bar.className = over ? 'over' : warn ? 'warn' : '';
+    $('budgetUsed').textContent = `${money(total)} spent · ${pct.toFixed(0)}% used`;
+    $('budgetDelta').textContent = rem >= 0 ? 'within budget ✓' : 'exceeded ✕';
+    $('budgetDelta').className = 'rem ' + (over ? 'over' : warn ? 'warn' : '');
+    $('budgetRemaining').className = 'b-left ' + (over ? 'over' : '');
+    $('budgetStatusPill').textContent = over ? 'Over budget' : warn ? 'Near limit' : 'On track';
+    $('budgetStatusPill').style.color = over ? 'var(--red)' : warn ? 'var(--amber)' : 'var(--green)';
+  } else {
+    $('budgetRemaining').textContent = money(total);
+    $('budgetRemainingLbl').textContent = 'spent (no budget set)';
+    $('budgetOf').textContent = 'set a limit in the app';
+    bar.style.width = '0%';
+    bar.className = '';
+    $('budgetUsed').textContent = `${money(total)} spent`;
+    $('budgetDelta').textContent = '';
+    $('budgetStatusPill').textContent = 'No budget';
+    $('budgetStatusPill').style.color = 'var(--muted)';
+  }
+
+  /* ── Category breakdown ── */
+  const byCat = {};
+  for (const ex of expenses) {
+    const key = ex.category || 'misc';
+    byCat[key] = (byCat[key] || 0) + Number(ex.amount || 0);
+  }
+  const catEntries = Object.entries(byCat)
+    .map(([id, amt]) => ({ ...CAT_MAP[id] || { id, label: id, emoji: '📦' }, amt }))
+    .sort((a, b) => b.amt - a.amt);
+
+  $('catCountPill').textContent = catEntries.length
+    ? `${catEntries.length} categor${catEntries.length === 1 ? 'y' : 'ies'}`
+    : 'no data';
+
+  $('catList').innerHTML = catEntries.length
+    ? catEntries.map(c => {
+        const pct = total > 0 ? (c.amt / total) * 100 : 0;
+        return `
+          <div class="cat-row">
+            <div class="cat-top">
+              <span class="cat-emoji">${c.emoji}</span>
+              <span class="cat-name">${esc(c.label)}</span>
+              <span class="cat-pct">${pct.toFixed(0)}%</span>
+              <span class="cat-amt">${money(c.amt)}</span>
+            </div>
+            <div class="cat-bar"><i style="width:${pct}%"></i></div>
+          </div>`;
+      }).join('')
+    : '<div class="empty">No expenses this month.</div>';
+
+  /* ── Member breakdown ── */
+  const byMember = {};
+  for (const ex of expenses) {
+    const key = ex.addedBy || 'unknown';
+    if (!byMember[key]) byMember[key] = { name: ex.addedByName || 'Unknown', amt: 0, count: 0 };
+    byMember[key].amt += Number(ex.amount || 0);
+    byMember[key].count += 1;
+  }
+  const memEntries = Object.values(byMember).sort((a, b) => b.amt - a.amt);
+
+  $('memCountPill').textContent = memEntries.length
+    ? `${memEntries.length} member${memEntries.length === 1 ? '' : 's'}`
+    : 'no data';
+
+  const initials = n => (n || '?').split(/\s+/).filter(Boolean).slice(0, 2)
+    .map(w => w[0].toUpperCase()).join('');
+
+  $('memList').innerHTML = memEntries.length
+    ? memEntries.map(m => {
+        const pct = total > 0 ? (m.amt / total) * 100 : 0;
+        return `
+          <div class="mem-row">
+            <span class="avatar">${esc(initials(m.name))}</span>
+            <div class="mem-main">
+              <div class="mem-name">${esc(m.name)} <span class="muted" style="font-weight:500;font-size:11px">· ${m.count} entr${m.count===1?'y':'ies'}</span></div>
+              <div class="mem-bar"><i style="width:${pct}%"></i></div>
+            </div>
+            <div class="mem-meta">
+              <div class="mem-amt">${money(m.amt)}</div>
+              <div class="mem-pct">${pct.toFixed(0)}%</div>
+            </div>
+          </div>`;
+      }).join('')
+    : '<div class="empty">No members have added expenses yet.</div>';
+
+  /* ── Top 5 ── */
+  const top5 = [...expenses]
+    .sort((a, b) => Number(b.amount || 0) - Number(a.amount || 0))
+    .slice(0, 5);
+
+  $('topList').innerHTML = top5.length
+    ? top5.map((ex, i) => {
+        const cat = CAT_MAP[ex.category] || { emoji: '📦', label: ex.category || 'Other' };
+        const rankCls = i < 3 ? `r${i+1}` : '';
+        const [yy, mm, dd] = (ex.date || '').split('-');
+        const dateStr = ex.date ? `${Number(dd)} ${MONTHS_SHORT[Number(mm)-1]}` : '';
+        return `
+          <div class="top-row">
+            <span class="top-rank ${rankCls}">${i+1}</span>
+            <div class="top-main">
+              <div class="top-cat">${cat.emoji} ${esc(cat.label)}</div>
+              <div class="top-note">${esc(ex.note || ex.addedByName || '')}</div>
+            </div>
+            <div class="top-meta">
+              <div class="top-amt">${money(ex.amount)}</div>
+              <div class="top-date">${dateStr}${ex.addedByName ? ' · ' + esc(ex.addedByName) : ''}</div>
+            </div>
+          </div>`;
+      }).join('')
+    : '<div class="empty">No expenses this month.</div>';
+
+  /* ── Daily spark ── */
+  renderSpark(expenses, lastDay);
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   9. DAILY SPARKLINE
+   ═══════════════════════════════════════════════════════════════ */
+function renderSpark(expenses, lastDay) {
+  const daily = new Array(lastDay).fill(0);
+  for (const ex of expenses) {
+    const d = Number((ex.date || '').split('-')[2]);
+    if (d >= 1 && d <= lastDay) daily[d-1] += Number(ex.amount || 0);
+  }
+  const peak = Math.max(...daily, 0);
+  const total = daily.reduce((s, v) => s + v, 0);
+
+  $('sparkPeak').textContent = peak > 0
+    ? `Peak day: ${money(peak)} · total ${money(total)}`
+    : 'No spending this month';
+  $('sparkPill').textContent = peak > 0 ? money(peak) + ' peak' : 'no data';
+
+  $('spark').innerHTML = daily.map((v, i) => {
+    const h = peak > 0 ? Math.max(3, (v / peak) * 100) : 3;
+    return `<div class="d ${v === 0 ? 'zero' : ''}" style="height:${h}%" title="Day ${i+1}: ${money(v)}"></div>`;
+  }).join('');
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   10. INIT
+   ═══════════════════════════════════════════════════════════════ */
+$('thisMonthBtn').classList.add('hidden');
+</script>
+</body>
+</html>
